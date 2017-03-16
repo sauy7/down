@@ -18,11 +18,12 @@ module Down
     warn "Passing :timeout option to `Down.download` is deprecated and will be removed in Down 3. You should use open-uri's :open_timeout and/or :read_timeout." if options.key?(:timeout)
     warn "Passing :progress option to `Down.download` is deprecated and will be removed in Down 3. You should use open-uri's :progress_proc." if options.key?(:progress)
 
-    max_size            = options.delete(:max_size)
-    max_redirects       = options.delete(:max_redirects) || 2
-    progress_proc       = options.delete(:progress_proc) || options.delete(:progress)
-    content_length_proc = options.delete(:content_length_proc)
-    timeout             = options.delete(:timeout)
+    max_size               = options.delete(:max_size)
+    max_redirects          = options.delete(:max_redirects) || 2
+    progress_proc          = options.delete(:progress_proc) || options.delete(:progress)
+    content_length_proc    = options.delete(:content_length_proc)
+    timeout                = options.delete(:timeout)
+    keep_original_filename = options.delete(:keep_original_filename)
 
     tries = max_redirects + 1
 
@@ -71,7 +72,7 @@ module Down
     # file extension, so we want to run it against #copy_to_tempfile which
     # does.
     open_uri_file = downloaded_file
-    downloaded_file = copy_to_tempfile(uri.path, open_uri_file)
+    downloaded_file = copy_to_tempfile(uri.path, open_uri_file, keep_original_filename)
     OpenURI::Meta.init downloaded_file, open_uri_file
 
     downloaded_file.extend DownloadedFile
@@ -142,8 +143,10 @@ module Down
     end
   end
 
-  def copy_to_tempfile(basename, io)
-    tempfile = Tempfile.new(["down", File.extname(basename)], binmode: true)
+  def copy_to_tempfile(basename, io, keep_original_filename = false)
+    name = ['down', File.extname(basename)]
+    name = from_original_filename(io, name) if keep_original_filename
+    tempfile = Tempfile.new(name, binmode: true)
     if io.is_a?(OpenURI::Meta) && io.is_a?(Tempfile)
       io.close
       tempfile.close
@@ -154,6 +157,14 @@ module Down
     end
     tempfile.open
     tempfile
+  end
+
+  def from_original_filename(io, name)
+    return name unless io.respond_to?(:meta)
+    original_filename = io.meta["content-disposition"].to_s[/filename="?([^ "]+)"?/, 1]
+    return if original_filename.nil? && original_filename == ''
+    ext = File.extname(original_filename)
+    [File.basename(original_filename, ext), ext]
   end
 
   module DownloadedFile
