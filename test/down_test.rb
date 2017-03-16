@@ -99,6 +99,15 @@ describe Down do
       assert_equal "myfilename.foo", tempfile.original_filename
     end
 
+    it "fetches original filename from url where content disposition is missing and uses it for tempfile if it's available" do
+      stub_request(:get, "http://example.com/image.jpg")
+        .to_return(body: "a" * 5)
+
+      tempfile = Down.download("http://example.com/image.jpg", keep_original_filename: true)
+      assert_match /image[^.]+\.jpg/, tempfile.path
+      assert_equal "image.jpg", tempfile.original_filename
+    end
+
     it "follows redirects" do
       stub_request(:get, "http://example.com").to_return(status: 301, headers: {'Location' => 'http://example1.com'})
       stub_request(:get, "http://example1.com").to_return(status: 301, headers: {'Location' => 'http://example2.com'})

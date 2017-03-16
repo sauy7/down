@@ -145,7 +145,7 @@ module Down
 
   def copy_to_tempfile(basename, io, keep_original_filename = false)
     name = ['down', File.extname(basename)]
-    name = from_original_filename(io, name) if keep_original_filename
+    name = from_original_filename(basename, io, name) if keep_original_filename
     tempfile = Tempfile.new(name, binmode: true)
     if io.is_a?(OpenURI::Meta) && io.is_a?(Tempfile)
       io.close
@@ -159,10 +159,10 @@ module Down
     tempfile
   end
 
-  def from_original_filename(io, name)
+  def from_original_filename(basename, io, name)
     return name unless io.respond_to?(:meta)
     original_filename = io.meta["content-disposition"].to_s[/filename="?([^ "]+)"?/, 1]
-    return if original_filename.nil? && original_filename == ''
+    original_filename = basename if original_filename.nil? || original_filename == ''
     ext = File.extname(original_filename)
     [File.basename(original_filename, ext), ext]
   end
