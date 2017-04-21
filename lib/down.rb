@@ -60,10 +60,10 @@ module Down
     rescue OpenURI::HTTPRedirect => redirect
       url = redirect.uri.to_s
       retry if (tries -= 1) > 0
-      raise Down::NotFound, "too many redirects"
+      raise Down::NotFound, "too many redirects: #{url}"
     rescue => error
       raise if error.is_a?(Down::Error)
-      raise Down::NotFound, "file not found"
+      raise Down::NotFound, "file not found: #{url}"
     end
 
     # open-uri will return a StringIO instead of a Tempfile if the filesize is
@@ -106,9 +106,11 @@ module Down
       http.cert_store = store
     end
 
+    request_headers = options.select { |key, value| key.is_a?(String) }
+
     request = Fiber.new do
       http.start do
-        http.request_get(uri.request_uri) do |response|
+        http.request_get(uri.request_uri, request_headers) do |response|
           Fiber.yield response
           response.instance_variable_set("@read", true)
         end
@@ -175,7 +177,10 @@ module Down
     private
 
     def filename_from_content_disposition
-      meta["content-disposition"].to_s[/filename="?([^ "]+)"?/, 1]
+      content_disposition = meta["content-disposition"].to_s
+      filename = content_disposition[/filename="([^"]*)"/, 1] || content_disposition[/filename=(.+)/, 1]
+      filename = CGI.unescape(filename.to_s.strip)
+      filename unless filename.empty?
     end
 
     def filename_from_uri

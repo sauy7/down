@@ -1,3 +1,30 @@
+## Additions
+
+* Adds keep_original_filename option so downloaded tempfile uses the original filename
+
+## 2.4.3 (2017-04-06)
+
+* Show the input URL in the `Down::Error` message.
+
+## 2.4.2 (2017-03-28)
+
+* Don't raise `StopIteration` in `Down::ChunkedIO` when `:chunks` is an empty
+  Enumerator.
+
+## 2.4.1 (2017-03-23)
+
+* Correctly detect empty filename from `Content-Disposition` header, and
+  in this case continue extracting filename from URL.
+
+## 2.4.0 (2017-03-19)
+
+* Allow `Down.open` to accept request headers as options with String keys,
+  just like `Down.download` does.
+
+* Decode URI-decoded filenames from the `Content-Disposition` header
+
+* Parse filenames without quotes from the `Content-Disposition` header
+
 ## 2.3.8 (2016-11-07)
 
 * Work around `Transfer-Encoding: chunked` responses by downloading whole

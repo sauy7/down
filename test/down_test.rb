@@ -46,60 +46,69 @@ describe Down do
       assert_equal 5, @progress
     end
 
-    it "makes downloaded files have original_filename and content_type" do
+    it "adds #content_type to downloaded files" do
       stub_request(:get, "http://example.com/image.jpg").to_return(body: "a" * 20 * 1024, headers: {'Content-Type' => 'image/jpeg'})
       tempfile = Down.download("http://example.com/image.jpg")
-      assert_equal "image.jpg", tempfile.original_filename
       assert_equal "image/jpeg", tempfile.content_type
 
       stub_request(:get, "http://example.com/small.jpg").to_return(body: "a" * 5, headers: {'Content-Type' => 'image/jpeg'})
       tempfile = Down.download("http://example.com/small.jpg")
-      assert_equal "small.jpg", tempfile.original_filename
       assert_equal "image/jpeg", tempfile.content_type
     end
 
-    it "decodes the original filename" do
-      stub_request(:get, "http://example.com/image%20space%2Fslash.jpg").to_return(body: "a" * 20 * 1024)
-      tempfile = Down.download("http://example.com/image%20space%2Fslash.jpg")
-      assert_equal "image space/slash.jpg", tempfile.original_filename
+    it "adds #original_filename extracted from Content-Disposition" do
+      stub_request(:get, "http://example.com/foo.jpg")
+        .to_return(body: "a" * 5, headers: {'Content-Disposition' => 'filename="my filename.ext"'})
+      tempfile = Down.download("http://example.com/foo.jpg")
+      assert_equal "my filename.ext", tempfile.original_filename
+
+      stub_request(:get, "http://example.com/bar.jpg")
+        .to_return(body: "a" * 5, headers: {'Content-Disposition' => 'filename="my%20filename.ext"'})
+      tempfile = Down.download("http://example.com/bar.jpg")
+      assert_equal "my filename.ext", tempfile.original_filename
+
+      stub_request(:get, "http://example.com/baz.jpg")
+        .to_return(body: "a" * 5, headers: {'Content-Disposition' => 'filename=myfilename.ext '})
+      tempfile = Down.download("http://example.com/baz.jpg")
+      assert_equal "myfilename.ext", tempfile.original_filename
     end
 
-    it "makes original filename return nil when path is missing" do
+    it "adds #original_filename extracted from URI path if Content-Disposition is blank" do
+      stub_request(:get, "http://example.com/image.jpg").to_return(body: "a" * 5)
+      tempfile = Down.download("http://example.com/image.jpg")
+      assert_equal "image.jpg", tempfile.original_filename
+
+      stub_request(:get, "http://example.com/image%20space%2Fslash.jpg").to_return(body: "a" * 5)
+      tempfile = Down.download("http://example.com/image%20space%2Fslash.jpg")
+      assert_equal "image space/slash.jpg", tempfile.original_filename
+
+      stub_request(:get, "http://example.com/image.jpg").to_return(body: "a" * 5, headers: {'Content-Disposition' => 'inline; filename='})
+      tempfile = Down.download("http://example.com/image.jpg")
+      assert_equal "image.jpg", tempfile.original_filename
+
+      stub_request(:get, "http://example.com/image.jpg").to_return(body: "a" * 5, headers: {'Content-Disposition' => 'inline; filename=""'})
+      tempfile = Down.download("http://example.com/image.jpg")
+      assert_equal "image.jpg", tempfile.original_filename
+
       stub_request(:get, "http://example.com").to_return(body: "a" * 5)
       tempfile = Down.download("http://example.com")
-      assert_equal nil, tempfile.original_filename
+      assert_nil tempfile.original_filename
 
       stub_request(:get, "http://example.com/").to_return(body: "a" * 5)
       tempfile = Down.download("http://example.com/")
-      assert_equal nil, tempfile.original_filename
+      assert_nil tempfile.original_filename
     end
 
-    it "fetches original filename from Content-Disposition if it's available" do
-      stub_request(:get, "http://example.com/image")
-        .to_return(body: "a" * 5, headers: {'Content-Disposition' => 'filename="myfilename.foo"'})
-
-      tempfile = Down.download("http://example.com/image")
-      assert_equal "myfilename.foo", tempfile.original_filename
-    end
-
-    it "fetches original filename from Content-Disposition without quotes if it's available" do
-      stub_request(:get, "http://example.com/image.jpg")
-        .to_return(body: "a" * 5, headers: {'Content-Disposition' => 'attachment; filename=myfilename.foo '})
-
-      tempfile = Down.download("http://example.com/image.jpg")
-      assert_equal "myfilename.foo", tempfile.original_filename
-    end
-
-    it "fetches original filename from Content-Disposition and uses it for tempfile if it's available" do
+    it "keep_original_filename option uses the original filename for the tempfile" do
+      # from content-disposition
       stub_request(:get, "http://example.com/image.jpg")
         .to_return(body: "a" * 5, headers: {'Content-Disposition' => 'attachment; filename=myfilename.foo '})
 
       tempfile = Down.download("http://example.com/image.jpg", keep_original_filename: true)
       assert_match /myfilename[^.]+\.foo/, tempfile.path
       assert_equal "myfilename.foo", tempfile.original_filename
-    end
 
-    it "fetches original filename from url where content disposition is missing and uses it for tempfile if it's available" do
+      # from url, where content-disposition is missing
       stub_request(:get, "http://example.com/image.jpg")
         .to_return(body: "a" * 5)
 
