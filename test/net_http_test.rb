@@ -1,0 +1,346 @@
+require "test_helper"
+
+require "down/net_http"
+require "http"
+
+require "stringio"
+require "json"
+require "base64"
+
+describe Down do
+  describe "#download" do
+    it "downloads content from url" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{20*1024}?seed=0")
+      assert_equal HTTP.get("#{$httpbin}/bytes/#{20*1024}?seed=0").to_s, tempfile.read
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{1024}?seed=0")
+      assert_equal HTTP.get("#{$httpbin}/bytes/#{1024}?seed=0").to_s, tempfile.read
+    end
+
+    it "returns a Tempfile" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{20*1024}")
+      assert_instance_of Tempfile, tempfile
+
+      # open-uri returns a StringIO on files with 10KB or less
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{1024}")
+      assert_instance_of Tempfile, tempfile
+    end
+
+    it "saves Tempfile to disk" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{20*1024}")
+      assert File.exist?(tempfile.path)
+
+      # open-uri returns a StringIO on files with 10KB or less
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{1024}")
+      assert File.exist?(tempfile.path)
+    end
+
+    it "opens the Tempfile in binary mode" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{20*1024}")
+      assert tempfile.binmode?
+
+      # open-uri returns a StringIO on files with 10KB or less
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/#{1024}")
+      assert tempfile.binmode?
+    end
+
+    it "gives the Tempfile a file extension" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/robots.txt")
+      assert_equal ".txt", File.extname(tempfile.path)
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/robots.txt?foo=bar")
+      assert_equal ".txt", File.extname(tempfile.path)
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/redirect-to?url=#{$httpbin}/robots.txt")
+      assert_equal ".txt", File.extname(tempfile.path)
+    end
+
+    it "accepts an URI object" do
+      tempfile = Down::NetHttp.download(URI("#{$httpbin}/bytes/100"))
+      assert_equal 100, tempfile.size
+    end
+
+    it "uses a default User-Agent" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/user-agent")
+      assert_equal "Down/#{Down::VERSION}", JSON.parse(tempfile.read)["user-agent"]
+    end
+
+    it "accepts max size" do
+      assert_raises(Down::TooLarge) do
+        Down::NetHttp.download("#{$httpbin}/response-headers?Content-Length=5", max_size: 4)
+      end
+      assert_raises(Down::TooLarge) do
+        Down::NetHttp.download("#{$httpbin}/response-headers?Content-Length=5", max_size: 4, content_length_proc: ->(n){})
+      end
+
+      assert_raises(Down::TooLarge) do
+        Down::NetHttp.download("#{$httpbin}/stream-bytes/100", max_size: 50)
+      end
+      assert_raises(Down::TooLarge) do
+        Down::NetHttp.download("#{$httpbin}/stream-bytes/100", max_size: 50, progress_proc: ->(n){})
+      end
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/response-headers?Content-Length=5", max_size: 6)
+      assert File.exist?(tempfile.path)
+    end
+
+    it "accepts content length proc" do
+      Down::NetHttp.download "#{$httpbin}/response-headers?Content-Length=10",
+                             content_length_proc: ->(n) { @content_length = n }
+
+      assert_equal 10, @content_length
+    end
+
+    it "accepts progress proc" do
+      Down::NetHttp.download "#{$httpbin}/stream-bytes/100?chunk_size=10",
+                             progress_proc: ->(n) { (@progress ||= []) << n }
+
+      assert_equal [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], @progress
+    end
+
+    it "detects and applies basic authentication from URL" do
+      tempfile = Down::NetHttp.download("#{$httpbin.sub("http://", '\0user:password@')}/basic-auth/user/password")
+      assert_equal true, JSON.parse(tempfile.read)["authenticated"]
+    end
+
+    it "follows redirects" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/redirect/1")
+      assert_equal "#{$httpbin}/get", JSON.parse(tempfile.read)["url"]
+      tempfile = Down::NetHttp.download("#{$httpbin}/redirect/2")
+      assert_equal "#{$httpbin}/get", JSON.parse(tempfile.read)["url"]
+      assert_raises(Down::TooManyRedirects) { Down::NetHttp.download("#{$httpbin}/redirect/3") }
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/redirect/3", max_redirects: 3)
+      assert_equal "#{$httpbin}/get", JSON.parse(tempfile.read)["url"]
+      assert_raises(Down::TooManyRedirects) { Down::NetHttp.download("#{$httpbin}/redirect/4", max_redirects: 3) }
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/absolute-redirect/1")
+      assert_equal "#{$httpbin}/get", JSON.parse(tempfile.read)["url"]
+      tempfile = Down::NetHttp.download("#{$httpbin}/relative-redirect/1")
+      assert_equal "#{$httpbin}/get", JSON.parse(tempfile.read)["url"]
+
+      # We also want to test that cookies are being forwarded on redirects, but
+      # httpbin doesn't have an endpoint which can both redirect and return a
+      # "Set-Cookie" header.
+    end
+
+    # I don't know how to test that the proxy is actually used
+    it "accepts proxy" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/100", proxy: $httpbin)
+      assert_equal 100, tempfile.size
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/100", proxy: $httpbin.sub("http://", '\0user:password@'))
+      assert_equal 100, tempfile.size
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/bytes/100", proxy: URI($httpbin.sub("http://", '\0user:password@')))
+      assert_equal 100, tempfile.size
+    end
+
+    it "forwards other options to open-uri" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/user-agent", {"User-Agent" => "Custom/Agent"})
+      assert_equal "Custom/Agent", JSON.parse(tempfile.read)["user-agent"]
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/basic-auth/user/password", http_basic_authentication: ["user", "password"])
+      assert_equal true, JSON.parse(tempfile.read)["authenticated"]
+    end
+
+    it "applies default options" do
+      net_http = Down::NetHttp.new("User-Agent" => "Janko")
+      tempfile = net_http.download("#{$httpbin}/user-agent")
+      assert_equal "Janko", JSON.parse(tempfile.read)["user-agent"]
+    end
+
+    it "adds #original_filename extracted from Content-Disposition" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/response-headers?Content-Disposition=inline;%20filename=\"my%20filename.ext\"")
+      assert_equal "my filename.ext", tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/response-headers?Content-Disposition=inline;%20filename=\"my%2520filename.ext\"")
+      assert_equal "my filename.ext", tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/response-headers?Content-Disposition=inline;%20filename=myfilename.ext%20")
+      assert_equal "myfilename.ext", tempfile.original_filename
+    end
+
+    it "adds #original_filename extracted from URI path if Content-Disposition is blank" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/robots.txt")
+      assert_equal "robots.txt", tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/basic-auth/user/pass%20word", http_basic_authentication: ["user", "pass word"])
+      assert_equal "pass word", tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/response-headers?Content-Disposition=inline;%20filename=")
+      assert_equal "response-headers", tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/response-headers?Content-Disposition=inline;%20filename=\"\"")
+      assert_equal "response-headers", tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/")
+      assert_nil tempfile.original_filename
+
+      tempfile = Down::NetHttp.download("#{$httpbin}")
+      assert_nil tempfile.original_filename
+    end
+
+    it "adds #content_type extracted from Content-Type" do
+      tempfile = Down::NetHttp.download("#{$httpbin}/image/png")
+      assert_equal "image/png", tempfile.content_type
+
+      tempfile = Down::NetHttp.download("#{$httpbin}/encoding/utf8")
+      assert_equal "text/html; charset=utf-8", tempfile.meta["content-type"]
+      assert_equal "text/html", tempfile.content_type
+
+      tempfile.meta.delete("content-type")
+      assert_nil tempfile.content_type
+
+      tempfile.meta["content-type"] = nil
+      assert_nil tempfile.content_type
+
+      tempfile.meta["content-type"] = ""
+      assert_nil tempfile.content_type
+    end
+
+    it "raises on HTTP error responses" do
+      error = assert_raises(Down::ClientError) { Down::NetHttp.download("#{$httpbin}/status/404") }
+      assert_equal "404 Not Found", error.message
+      assert_kind_of Net::HTTPResponse, error.response
+
+      error = assert_raises(Down::ServerError) { Down::NetHttp.download("#{$httpbin}/status/500") }
+      assert_equal "500 Internal Server Error", error.message
+      assert_kind_of Net::HTTPResponse, error.response
+    end
+
+    it "raises on invalid URLs" do
+      assert_raises(Down::InvalidUrl) { Down::NetHttp.download("http:\\example.org") }
+      assert_raises(Down::InvalidUrl) { Down::NetHttp.download("foo://example.org") }
+      assert_raises(Down::InvalidUrl) { Down::NetHttp.download("| ls") }
+    end
+
+    it "raises on connection errors" do
+      assert_raises(Down::ConnectionError) { Down::NetHttp.download("http://localhost:99999") }
+      assert_raises(Down::ConnectionError) { Down::NetHttp.download("#{$httpbin}/status/100") }
+    end
+
+    it "raises on timeout errors" do
+      assert_raises(Down::TimeoutError) { Down::NetHttp.download("#{$httpbin}/delay/0.5", read_timeout: 0, open_timeout: 0) }
+    end
+  end
+
+  describe "#open" do
+    it "streams response body in chunks" do
+      io = Down::NetHttp.open("#{$httpbin}/stream/10")
+      assert_equal 10, io.each_chunk.count
+    end
+
+    it "accepts an URI object" do
+      io = Down::NetHttp.open(URI("#{$httpbin}/stream/10"))
+      assert_equal 10, io.each_chunk.count
+    end
+
+    it "downloads on demand" do
+      start = Time.now
+      io = Down::NetHttp.open("#{$httpbin}/drip?duration=0.5&delay=0")
+      io.close
+      assert_operator Time.now - start, :<, 0.5
+    end
+
+    it "returns content in encoding specified by charset" do
+      io = Down::NetHttp.open("#{$httpbin}/stream/10")
+      assert_equal Encoding::BINARY, io.read.encoding
+
+      io = Down::NetHttp.open("#{$httpbin}/get")
+      assert_equal Encoding::BINARY, io.read.encoding
+
+      io = Down::NetHttp.open("#{$httpbin}/encoding/utf8")
+      assert_equal Encoding::UTF_8, io.read.encoding
+    end
+
+    it "uses a default User-Agent" do
+      io = Down::NetHttp.open("#{$httpbin}/user-agent")
+      assert_equal "Down/#{Down::VERSION}", JSON.parse(io.read)["user-agent"]
+    end
+
+    it "doesn't have to be rewindable" do
+      io = Down::NetHttp.open("#{$httpbin}/stream/10", rewindable: false)
+      io.read
+      assert_raises(IOError) { io.rewind }
+    end
+
+    it "extracts size from Content-Length" do
+      io = Down::NetHttp.open(URI("#{$httpbin}/bytes/100"))
+      assert_equal 100, io.size
+
+      io = Down::NetHttp.open(URI("#{$httpbin}/stream-bytes/100"))
+      assert_nil io.size
+    end
+
+    it "closes the connection on #close" do
+      io = Down::NetHttp.open("#{$httpbin}/bytes/100")
+      Net::HTTP.any_instance.expects(:do_finish)
+      io.close
+    end
+
+    it "accepts request headers" do
+      io = Down::NetHttp.open("#{$httpbin}/headers", {"Key" => "Value"})
+      assert_equal "Value", JSON.parse(io.read)["headers"]["Key"]
+    end
+
+    # I don't know how to test that the proxy is actually used
+    it "accepts proxy" do
+      io = Down::NetHttp.open("#{$httpbin}/bytes/100", proxy: $httpbin)
+      assert_equal 100, io.size
+
+      io = Down::NetHttp.open("#{$httpbin}/bytes/100", proxy: $httpbin.sub("http://", '\0user:password@'))
+      assert_equal 100, io.size
+
+      io = Down::NetHttp.open("#{$httpbin}/bytes/100", proxy: URI($httpbin.sub("http://", '\0user:password@')))
+      assert_equal 100, io.size
+    end
+
+    it "detects and applies basic authentication from URL" do
+      io = Down::NetHttp.open("#{$httpbin.sub("http://", '\0user:password@')}/basic-auth/user/password")
+      assert_equal true, JSON.parse(io.read)["authenticated"]
+    end
+
+    it "applies default options" do
+      net_http = Down::NetHttp.new("User-Agent" => "Janko")
+      io = net_http.open("#{$httpbin}/user-agent")
+      assert_equal "Janko", JSON.parse(io.read)["user-agent"]
+    end
+
+    it "saves response data" do
+      io = Down::NetHttp.open("#{$httpbin}/response-headers?Key=Value")
+      assert_equal "Value",             io.data[:headers]["Key"]
+      assert_equal 200,                 io.data[:status]
+      assert_kind_of Net::HTTPResponse, io.data[:response]
+    end
+
+    it "raises on HTTP error responses" do
+      error = assert_raises(Down::ClientError) { Down::NetHttp.open("#{$httpbin}/status/404") }
+      assert_equal "404 Not Found", error.message
+      assert_kind_of Net::HTTPResponse, error.response
+
+      error = assert_raises(Down::ServerError) { Down::NetHttp.open("#{$httpbin}/status/500") }
+      assert_equal "500 Internal Server Error", error.message
+      assert_kind_of Net::HTTPResponse, error.response
+
+      error = assert_raises(Down::ResponseError) { Down::NetHttp.open("#{$httpbin}/status/301") }
+      assert_equal "301 Moved Permanently", error.message
+      assert_kind_of Net::HTTPResponse, error.response
+    end
+
+    it "raises on invalid URLs" do
+      assert_raises(Down::InvalidUrl) { Down::NetHttp.open("http:\\example.org") }
+      assert_raises(Down::InvalidUrl) { Down::NetHttp.open("foo://example.org") }
+      assert_raises(Down::InvalidUrl) { Down::NetHttp.open("| ls") }
+    end
+
+    it "raises on connection errors" do
+      assert_raises(Down::ConnectionError) { Down::NetHttp.open("http://localhost:99999") }
+      assert_raises(Down::ConnectionError) { Down::NetHttp.open("#{$httpbin}/status/100") }
+    end
+
+    it "raises on timeout errors" do
+      assert_raises(Down::TimeoutError) { Down::NetHttp.open("#{$httpbin}/delay/0.5", read_timeout: 0).read }
+    end
+  end
+end

@@ -2,6 +2,128 @@
 
 * Adds keep_original_filename option so downloaded tempfile uses the original filename
 
+## 4.1.0 (2017-08-29)
+
+* Fix `FiberError` occurring on `Down::NetHttp.open` when response is chunked and gzipped (@janko-m)
+
+* Use a default `User-Agent` in `Down::NetHttp.open` (@janko-m)
+
+* Fix raw read timeout error sometimes being raised instead of `Down::TimeoutError` in `Down.open` (@janko-m)
+
+* `Down::ChunkedIO` can now be parsed by the CSV Ruby standard library (@janko-m)
+
+* Implement `Down::ChunkedIO#gets` (@janko-m)
+
+* Implement `Down::ChunkedIO#pos` (@janko-m)
+
+## 4.0.1 (2017-07-08)
+
+* Load and assign the `NetHttp` backend immediately on `require "down"` (@janko-m)
+
+* Remove undocumented `Down::ChunkedIO#backend=` that was added in 4.0.0 to avoid confusion (@janko-m)
+
+## 4.0.0 (2017-06-24)
+
+* Don't apply `Down.download` and `Down.open` overrides when loading a backend (@janko-m)
+
+* Remove `Down::Http.client` attribute accessor (@janko-m)
+
+* Make `Down::NetHttp`, `Down::Http`, and `Down::Wget` classes instead of modules (@janko-m)
+
+* Remove `Down.copy_to_tempfile` (@janko-m)
+
+* Add Wget backend (@janko-m)
+
+* Add `:content_length_proc` and `:progress_proc` to the HTTP.rb backend (@janko-m)
+
+* Halve string allocations in `Down::ChunkedIO#readpartial` when buffer string is not used (@janko-m)
+
+## 3.2.0 (2017-06-21)
+
+* Add `Down::ChunkedIO#readpartial` for more memory efficient reading (@janko-m)
+
+* Fix `Down::ChunkedIO` not returning second part of the last chunk if it was previously partially read (@janko-m)
+
+* Strip internal variables from `Down::ChunkedIO#inspect` and show only the important ones (@janko-m)
+
+* Add `Down::ChunkedIO#closed?` (@janko-m)
+
+* Add `Down::ChunkedIO#rewindable?` (@janko-m)
+
+* In `Down::ChunkedIO` only create the Tempfile if it's going to be used (@janko-m)
+
+## 3.1.0 (2017-06-16)
+
+* Split `Down::NotFound` into explanatory exceptions (@janko-m)
+
+* Add `:read_timeout` and `:open_timeout` options to `Down::NetHttp.open` (@janko-m)
+
+* Return an `Integer` in `data[:status]` on a result of `Down.open` when using the HTTP.rb strategy (@janko-m)
+
+## 3.0.0 (2017-05-24)
+
+* Make `Down.open` pass encoding from content type charset to `Down::ChunkedIO` (@janko-m)
+
+* Add `:encoding` option to `Down::ChunkedIO.new` for specifying the encoding of returned content (@janko-m)
+
+* Add HTTP.rb backend as an alternative to Net::HTTP (@janko-m)
+
+* Stop testing on MRI 2.1 (@janko-m)
+
+* Forward cookies from the `Set-Cookie` response header when redirecting (@janko-m)
+
+* Add `frozen-string-literal: true` comments for less string allocations on Ruby 2.3+ (@janko-m)
+
+* Modify `#content_type` to return nil instead of `application/octet-stream` when `Content-Type` is blank in `Down.download` (@janko-m)
+
+* `Down::ChunkedIO#read`, `#each_chunk`, `#eof?`, `rewind` now raise an `IOError` when `Down::ChunkedIO` has been closed (@janko-m)
+
+* `Down::ChunkedIO` now caches only the content that has been read (@janko-m)
+
+* Add `Down::ChunkedIO#size=` to allow assigning size after the `Down::ChunkedIO` has been instantiated (@janko-m)
+
+* Make `:size` an optional argument in `Down::ChunkedIO` (@janko-m)
+
+* Call enumerator's `ensure` block when `Down::ChunkedIO#close` is called (@janko-m)
+
+* Add `:rewindable` option to `Down::ChunkedIO` and `Down.open` for disabling caching read content into a file (@janko-m)
+
+* Drop support for MRI 2.0 (@janko-m)
+
+* Drop support for MRI 1.9.3 (@janko-m)
+
+* Remove deprecated `:progress` option (@janko-m)
+
+* Remove deprecated `:timeout` option (@janko-m)
+
+* Reraise only a subset of exceptions as `Down::NotFound` in `Down.download` (@janko-m)
+
+* Support streaming of "Transfer-Encoding: chunked" responses in `Down.open` again (@janko-m)
+
+* Remove deprecated `Down.stream` (@janko-m)
+
+## 2.5.1 (2017-05-13)
+
+* Remove URL from the error messages (@janko-m)
+
+## 2.5.0 (2017-05-03)
+
+* Support both Strings and `URI` objects in `Down.download` and `Down.open` (@olleolleolle)
+
+* Work around a `CGI.unescape` bug in Ruby 2.4.
+
+* Apply HTTP Basic authentication contained in URLs in `Down.open`.
+
+* Raise `Down::NotFound` on 4xx and 5xx responses in `Down.open`.
+
+* Write `:status` and `:headers` information to `Down::ChunkedIO#data` in `Down.open`.
+
+* Add `#data` attribute to `Down::ChunkedIO` for saving custom result data.
+
+* Don't save retrieved chunks into the file in `Down::ChunkedIO#each_chunk`.
+
+* Add `:proxy` option to `Down.download` and `Down.open`.
+
 ## 2.4.3 (2017-04-06)
 
 * Show the input URL in the `Down::Error` message.

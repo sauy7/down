@@ -1,3 +1,5 @@
+# frozen-string-literal: true
+
 module Down
-  VERSION = "2.4.3"
+  VERSION = "4.1.0"
 end

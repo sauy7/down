@@ -1,4 +1,44 @@
 require "test_helper"
+
+require "down"
+require "down/http"
+
+describe Down do
+  i_suck_and_my_tests_are_order_dependent! # ಠ_ಠ
+
+  describe "#backend" do
+    it "returns NetHttp by default" do
+      assert_equal Down::NetHttp, Down.backend
+    end
+
+    it "can set the backend via a symbol" do
+      Down.backend :http
+      assert_equal Down::Http, Down.backend
+    end
+
+    it "can set the backend via a class" do
+      Down.backend Down::Http
+      assert_equal Down::Http, Down.backend
+    end
+  end
+
+  describe "#download" do
+    it "delegates to the underlying backend" do
+      Down.backend.expects(:download).with("http://example.com")
+      Down.download("http://example.com")
+    end
+  end
+
+  describe "#open" do
+    it "delegates to the underlying backend" do
+      Down.backend.expects(:open).with("http://example.com")
+      Down.open("http://example.com")
+    end
+  end
+end
+
+=begin
+require "test_helper"
 require "stringio"
 
 describe Down do
@@ -117,22 +157,6 @@ describe Down do
       assert_equal "image.jpg", tempfile.original_filename
     end
 
-    it "follows redirects" do
-      stub_request(:get, "http://example.com").to_return(status: 301, headers: {'Location' => 'http://example1.com'})
-      stub_request(:get, "http://example1.com").to_return(status: 301, headers: {'Location' => 'http://example2.com'})
-
-      stub_request(:get, "http://example2.com").to_return(body: "a" * 5)
-      tempfile = Down.download("http://example.com")
-      assert_equal "aaaaa", tempfile.read
-
-      stub_request(:get, "http://example2.com").to_return(status: 301, headers: {'Location' => 'http://example3.com'})
-      assert_raises(Down::NotFound) { Down.download("http://example.com") }
-
-      stub_request(:get, "http://example3.com").to_return(body: "a" * 5)
-      tempfile = Down.download("http://example.com", max_redirects: 3)
-      assert_equal "aaaaa", tempfile.read
-    end
-
     it "preserves extension" do
       # Tempfile
       stub_request(:get, "http://example.com/image.jpg").to_return(body: "a" * 20 * 1024)
@@ -145,20 +169,6 @@ describe Down do
       tempfile = Down.download("http://example.com/image.jpg")
       assert_equal ".jpg", File.extname(tempfile.path)
       assert File.exist?(tempfile.path)
-    end
-
-    it "automatically applies basic authentication" do
-      stub_request(:get, "http://example.com/image.jpg").to_return(body: "a" * 5) if ENV["CI"]
-      stub_request(:get, "http://user:password@example.com/image.jpg").to_return(body: "a" * 5)
-      tempfile = Down.download("http://user:password@example.com/image.jpg")
-      assert_equal "aaaaa", tempfile.read
-    end
-
-    it "forwards options to open-uri" do
-      stub_request(:get, "http://example.com").to_return(status: 301, headers: {'Location' => 'http://example2.com'})
-      stub_request(:get, "http://example2.com").to_return(body: "redirected")
-      tempfile = Down.download("http://example.com", redirect: true)
-      assert_equal "redirected", tempfile.read
     end
 
     it "raises NotFound on HTTP errors" do
@@ -272,157 +282,4 @@ describe Down do
     end
   end
 end
-
-describe Down::ChunkedIO do
-  def chunked_io(options = {})
-    defaults = {chunks: ["ab", "c"].each, size: 3, on_close: ->{}}
-    Down::ChunkedIO.new(defaults.merge(options))
-  end
-
-  describe "#size" do
-    it "returns the given size" do
-      io = chunked_io(size: 3)
-      assert_equal 3, io.size
-    end
-  end
-
-  describe "#read" do
-    it "returns contents of the file without arguments" do
-      io = chunked_io(chunks: ["abc"].each)
-      assert_equal "abc", io.read
-    end
-
-    it "accepts length" do
-      io = chunked_io(chunks: ["abc"].each)
-      assert_equal "a",  io.read(1)
-      assert_equal "bc", io.read(2)
-    end
-
-    it "accepts buffer" do
-      io = chunked_io(chunks: ["abc"].each)
-      buffer = ""
-      io.read(2, buffer)
-      assert_equal "ab", buffer
-      io.read(1, buffer)
-      assert_equal "c", buffer
-    end
-
-    it "downloads only how much it needs" do
-      io = chunked_io(chunks: ["ab", "c"].each)
-      assert_equal 0, io.tempfile.size
-      io.read(1)
-      assert_equal 2, io.tempfile.size
-      io.read(1)
-      assert_equal 2, io.tempfile.size
-      io.read(1)
-      assert_equal 3, io.tempfile.size
-    end
-
-    it "calls :on_close callback after everything is read" do
-      io = chunked_io(on_close: (on_close = ->{}))
-      on_close.expects(:call)
-      io.read
-    end
-
-    it "calls :on_close only once" do
-      io = chunked_io(on_close: (on_close = ->{}))
-      on_close.expects(:call).once
-      io.read
-      io.rewind
-      io.read
-    end
-  end
-
-  describe "#each_chunk" do
-    it "yields chunks" do
-      io = chunked_io(chunks: ["a", "b", "c"].each)
-      io.each_chunk { |chunk| (@chunks ||= []) << chunk }
-      assert_equal ["a", "b", "c"], @chunks
-    end
-
-    it "returns an enumerator without arguments" do
-      io = chunked_io(chunks: ["a", "b", "c"].each)
-      assert_equal ["a", "b", "c"], io.each_chunk.to_a
-    end
-
-    it "calls :on_close callback after yielding chunks" do
-      io = chunked_io(chunks: ["abc"].each, on_close: (on_close = ->{}))
-      on_close.expects(:call)
-      io.each_chunk {}
-    end
-
-    it "calls :on_close only once" do
-      io = chunked_io(chunks: ["abc"].each, on_close: (on_close = ->{}))
-      on_close.expects(:call).once
-      io.each_chunk {}
-      io.each_chunk {}
-    end
-  end
-
-  describe "#eof?" do
-    it "returns true when the whole file is read" do
-      io = chunked_io
-      assert_equal false, io.eof?
-      io.read
-      assert_equal true, io.eof?
-    end
-
-    it "returns false when on end of tempfile, but not on end of download" do
-      io = chunked_io(chunks: ["ab", "c"].each)
-      io.read(2)
-      assert_equal true,  io.tempfile.eof?
-      assert_equal false, io.eof?
-      io.read(1)
-      assert_equal true, io.eof?
-    end
-
-    it "returns true when on end of file and on last chunk" do
-      io = chunked_io
-      assert_equal false, io.eof?
-      io.read(io.size)
-      assert_equal true, io.eof?
-    end
-  end
-
-  describe "#rewind" do
-    it "rewinds the file" do
-      io = chunked_io(chunks: ["abc"].each)
-      assert_equal "abc", io.read
-      io.rewind
-      assert_equal "abc", io.read
-    end
-  end
-
-  describe "#close" do
-    it "deletes the underlying tempfile" do
-      io = chunked_io
-      path = io.tempfile.path
-      io.close
-      refute File.exists?(path)
-    end
-
-    it "calls :on_close" do
-      io = chunked_io(on_close: (on_close = ->{}))
-      on_close.expects(:call)
-      io.close
-    end
-
-    it "doesn't error when called after #each_chunk" do
-      io = chunked_io
-      io.each_chunk {}
-      io.close
-    end
-  end
-
-  it "works without :size" do
-    io = chunked_io(size: nil, chunks: ["a", "b", "c"].each)
-    assert_equal nil, io.size
-    io.read(1)
-    assert_equal false, io.eof?
-    io.read(1)
-    assert_equal false, io.eof?
-    io.rewind
-    io.read
-    assert_equal true, io.eof?
-  end
-end
+=end
